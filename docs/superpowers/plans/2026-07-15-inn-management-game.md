@@ -12,7 +12,7 @@
 
 - 目标为手机竖屏，设计基准 1080×1920。
 - 首版只实现澜申里洋房；其他地区只保留配置扩展接口。
-- 首版包含 4 类客群、6 项通用满意度、邻里安静度、20–25 件设施、8–12 个组合、3 名员工和 4–6 个扩展区域。
+- 首版包含 4 类客群、6 项通用满意度、邻里安静度、20–25 件设施、8–12 个组合、3 名员工和 4–6 个扩展区域。员工仅提供基础分工，并以服务感与疲劳形成取舍。
 - 扩展锤仅通过游戏内资金和解锁条件取得，不设计付费墙、抽卡或联机。
 - 所有内容均为原创；不得复制既有游戏的资产、UI、文案或数值。
 - 规则服务必须可在 headless 模式测试；随机性必须使用可注入种子。
@@ -378,17 +378,19 @@ git add inn-management-game/scripts/services/layout_service.gd inn-management-ga
 git commit -m "feat: add inn layout and combination rules"
 ~~~
 
-## Task 4: Implement guest scoring and the seven-day cycle
+## Task 4: Implement staff assignments, guest scoring, and the seven-day cycle
 
 **Files:**
 
 - Create: inn-management-game/scripts/services/guest_service.gd
+- Create: inn-management-game/scripts/models/employee.gd
+- Create: inn-management-game/scripts/services/staff_service.gd
 - Create: inn-management-game/scripts/game_state.gd
 - Create: inn-management-game/tests/test_guest_service.gd
 
 **Interfaces:**
 
-- Produces: GuestService.score(guest, stats, neighborhood_quiet, event) and GameState.end_day(guests, event).
+- Produces: StaffService.assign(employee_id, role), StaffService.service_bonus(), StaffService.end_day(), GuestService.score(guest, stats, neighborhood_quiet, event), and GameState.end_day(guests, event).
 
 - [ ] **Step 1: Write failing scoring and cycle tests**
 
@@ -398,6 +400,11 @@ Create tests/test_guest_service.gd:
 extends RefCounted
 
 func run_all() -> int:
+    var staff := preload("res://scripts/services/staff_service.gd").new([Employee.new("lin", "前台"), Employee.new("zhou", "客房"), Employee.new("wu", "餐饮")])
+    assert(staff.assign("lin", "front_desk"))
+    assert(staff.service_bonus() == 2)
+    staff.end_day()
+    assert(staff.employees["lin"].fatigue == 1)
     var guest := GuestProfile.new("business", 320, {"quiet": 3, "convenience": 3, "service": 2})
     var scorer := preload("res://scripts/services/guest_service.gd").new()
     var high := scorer.score(guest, {"quiet": 8, "convenience": 8, "service": 6}, 100, {})
@@ -414,9 +421,42 @@ func run_all() -> int:
 
 Run: godot --headless --path inn-management-game --script res://tests/test_runner.gd
 
-Expected: non-zero exit because GuestService and GameState are absent.
+Expected: non-zero exit because StaffService, GuestService, and GameState are absent.
 
 - [ ] **Step 3: Implement deterministic scoring and daily settlement**
+
+Create employee.gd and staff_service.gd:
+
+~~~
+# employee.gd
+class_name Employee
+extends RefCounted
+var id: String
+var name: String
+var role := "rest"
+var fatigue := 0
+func _init(p_id: String, p_name: String) -> void:
+    id = p_id; name = p_name
+
+# staff_service.gd
+class_name StaffService
+extends RefCounted
+var employees := {}
+const ROLE_BONUS := {"front_desk": 2, "housekeeping": 2, "food": 2, "rest": 0}
+func _init(initial: Array) -> void:
+    for employee in initial: employees[employee.id] = employee
+func assign(employee_id: String, role: String) -> bool:
+    if not employees.has(employee_id) or not ROLE_BONUS.has(role): return false
+    employees[employee_id].role = role
+    return true
+func service_bonus() -> int:
+    var bonus := 0
+    for employee in employees.values(): bonus += ROLE_BONUS[employee.role]
+    return bonus
+func end_day() -> void:
+    for employee in employees.values():
+        employee.fatigue = clampi(employee.fatigue + (1 if employee.role != "rest" else -2), 0, 10)
+~~~
 
 Create guest_service.gd:
 
@@ -450,6 +490,7 @@ var data: Dictionary
 var layout: LayoutService
 var effects := EffectService.new()
 var scorer := GuestService.new()
+var staff := StaffService.new([Employee.new("lin", "林姐"), Employee.new("zhou", "周叔"), Employee.new("wu", "小吴")])
 
 func _init(seed: int = 1) -> void:
     data = LanShenli.new().create()
@@ -457,12 +498,14 @@ func _init(seed: int = 1) -> void:
 
 func end_day(today_guests: Array, event: Dictionary) -> Dictionary:
     var effect := effects.calculate(layout.placements, data.combinations)
+    effect.stats.service += staff.service_bonus()
     var income := 0
     for guest in today_guests:
         var result := scorer.score(guest, effect.stats, neighborhood_quiet, event)
         income += result.income
         neighborhood_quiet = clampi(neighborhood_quiet - result.neighborhood_delta, 0, 100)
     funds += income
+    staff.end_day()
     day += 1
     if day > 7: day = 1; week += 1
     return {"income": income, "stats": effect.stats, "discovered": effect.discovered}
@@ -472,13 +515,13 @@ func end_day(today_guests: Array, event: Dictionary) -> Dictionary:
 
 Run: godot --headless --path inn-management-game --script res://tests/test_runner.gd
 
-Expected: exit code 0; a quiet business stay earns more and seven settlements advance to week two.
+Expected: exit code 0; assigning staff increases service, active staff gain fatigue, a quiet business stay earns more, and seven settlements advance to week two.
 
 - [ ] **Step 5: Commit**
 
 ~~~
-git add inn-management-game/scripts/services/guest_service.gd inn-management-game/scripts/game_state.gd inn-management-game/tests/test_guest_service.gd
-git commit -m "feat: add guest scoring and operating cycle"
+git add inn-management-game/scripts/models/employee.gd inn-management-game/scripts/services/staff_service.gd inn-management-game/scripts/services/guest_service.gd inn-management-game/scripts/game_state.gd inn-management-game/tests/test_guest_service.gd
+git commit -m "feat: add staff scoring and operating cycle"
 ~~~
 
 ## Task 5: Add catalog, merchant, expansion hammer, and saves
@@ -686,6 +729,6 @@ git commit -m "feat: deliver inn management game first loop"
 
 ## Plan self-review
 
-- **Spec coverage:** Task 2 supplies four guests, six standard stats, the required content counts, and the four expansion areas. Task 3 implements layout and combination bonuses. Task 4 implements guest scoring, event penalty, income and the 7-day loop. Task 5 implements catalog discovery, deterministic merchant offers, in-game hammers and save handling. Task 6 provides a portrait UI plus automated and manual acceptance. Multiple regions remain a Region configuration boundary, as scoped.
+- **Spec coverage:** Task 2 supplies four guests, six standard stats, the required content counts, and the four expansion areas. Task 3 implements layout and combination bonuses. Task 4 implements three named employees, role-based service bonuses, fatigue, guest scoring, event penalty, income and the 7-day loop. Task 5 implements catalog discovery, deterministic merchant offers, in-game hammers and save handling. Task 6 provides a portrait UI plus automated and manual acceptance. Multiple regions remain a Region configuration boundary, as scoped.
 - **Placeholder scan:** Each task includes paths, interfaces, test code, commands, expected outputs, concrete implementation, and a commit command. No deferred tasks or unresolved requirements are present.
 - **Type consistency:** Facility, Combination, GuestProfile, Region, LayoutService, EffectService, GuestService, ProgressionService, and GameState use consistent names and signatures across all tasks.
