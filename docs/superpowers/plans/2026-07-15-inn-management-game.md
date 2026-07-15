@@ -4,7 +4,7 @@
 
 **Goal:** 用 Godot 构建竖屏澜申里洋房民宿经营首版，完成布局、组合、客群评分、图册、商人与扩展锤的 7 日经营闭环。
 
-**Architecture:** 经营规则由可配置数据和纯服务类组成，场景层只负责输入和展示。GameState 协调布局、日结、图册、商人与存档，地区以独立配置接入。
+**Architecture:** 经营规则由可配置数据和纯服务类组成，场景层只负责输入和展示。GameState 协调布局、员工、日结、图册、教程管家、商人与存档，地区以独立配置接入。
 
 **Tech Stack:** Godot 4.3+、GDScript、Control UI、JSON 存档、自定义 Godot headless 测试运行器；不引入第三方插件。
 
@@ -12,7 +12,8 @@
 
 - 目标为手机竖屏，设计基准 1080×1920。
 - 首版只实现澜申里洋房；其他地区只保留配置扩展接口。
-- 首版包含 4 类客群、6 项通用满意度、邻里安静度、20–25 件设施、8–12 个组合、3 名员工和 4–6 个扩展区域。员工仅提供基础分工，并以服务感与疲劳形成取舍。
+- 首版包含 4 类客群、6 项通用满意度、邻里安静度、20–25 件设施、8–12 个组合、2 名员工和 4–6 个扩展区域。员工仅提供基础分工，并以服务感与疲劳形成取舍。
+- 1 名教程管家不参与经营数值；首次游玩时按查看洋房、购买设施、放置设施、发现组合、开始营业、日结的顺序引导，并将 tutorial_completed 存档。
 - 扩展锤仅通过游戏内资金和解锁条件取得，不设计付费墙、抽卡或联机。
 - 所有内容均为原创；不得复制既有游戏的资产、UI、文案或数值。
 - 规则服务必须可在 headless 模式测试；随机性必须使用可注入种子。
@@ -23,6 +24,7 @@
 - inn-management-game/scenes/Main.tscn：入口场景。
 - inn-management-game/scripts/models：设施、组合、客群、地区记录。
 - inn-management-game/scripts/services：布局、效果、评分、进度、存档。
+- inn-management-game/scripts/services/tutorial_service.gd：教程管家步骤与完成状态。
 - inn-management-game/scripts/game_state.gd：经营周期协调器。
 - inn-management-game/scripts/ui/main_screen.gd：竖屏主界面。
 - inn-management-game/data/lan_shenli.gd：首版地区配置。
@@ -400,7 +402,7 @@ Create tests/test_guest_service.gd:
 extends RefCounted
 
 func run_all() -> int:
-    var staff := preload("res://scripts/services/staff_service.gd").new([Employee.new("lin", "前台"), Employee.new("zhou", "客房"), Employee.new("wu", "餐饮")])
+    var staff := preload("res://scripts/services/staff_service.gd").new([Employee.new("lin", "前台"), Employee.new("zhou", "客房")])
     assert(staff.assign("lin", "front_desk"))
     assert(staff.service_bonus() == 2)
     staff.end_day()
@@ -490,7 +492,7 @@ var data: Dictionary
 var layout: LayoutService
 var effects := EffectService.new()
 var scorer := GuestService.new()
-var staff := StaffService.new([Employee.new("lin", "林姐"), Employee.new("zhou", "周叔"), Employee.new("wu", "小吴")])
+var staff := StaffService.new([Employee.new("lin", "林姐"), Employee.new("zhou", "周叔")])
 
 func _init(seed: int = 1) -> void:
     data = LanShenli.new().create()
@@ -524,18 +526,19 @@ git add inn-management-game/scripts/models/employee.gd inn-management-game/scrip
 git commit -m "feat: add staff scoring and operating cycle"
 ~~~
 
-## Task 5: Add catalog, merchant, expansion hammer, and saves
+## Task 5: Add catalog, merchant, tutorial butler, expansion hammer, and saves
 
 **Files:**
 
 - Create: inn-management-game/scripts/services/progression_service.gd
 - Create: inn-management-game/scripts/services/save_service.gd
+- Create: inn-management-game/scripts/services/tutorial_service.gd
 - Create: inn-management-game/tests/test_progression_service.gd
 - Modify: inn-management-game/scripts/game_state.gd
 
 **Interfaces:**
 
-- Produces: ProgressionService.record_discoveries(ids), offer(seed), buy_hammer(area_id, funds, layout), SaveService.to_json(state), SaveService.from_json(text).
+- Produces: ProgressionService.record_discoveries(ids), offer(seed), buy_hammer(area_id, funds, layout), TutorialService.complete_action(action), TutorialService.to_state(), SaveService.to_json(state), SaveService.from_json(text).
 
 - [ ] **Step 1: Write failing progress and save tests**
 
@@ -545,6 +548,12 @@ Create tests/test_progression_service.gd:
 extends RefCounted
 
 func run_all() -> int:
+    var tutorial := preload("res://scripts/services/tutorial_service.gd").new()
+    assert(tutorial.current_action() == "view_inn")
+    assert(not tutorial.complete_action("place_facility"))
+    for action in ["view_inn", "buy_facility", "place_facility", "discover_combination", "start_business", "settle_day"]:
+        assert(tutorial.complete_action(action))
+    assert(tutorial.completed)
     var progression := preload("res://scripts/services/progression_service.gd").new(["window_reading"])
     progression.record_discoveries(["window_reading"])
     assert(progression.catalog.has("window_reading"))
@@ -552,6 +561,8 @@ func run_all() -> int:
     var save := preload("res://scripts/services/save_service.gd").new()
     var restored := save.from_json(save.to_json({"day": 3, "funds": 480}))
     assert(restored.day == 3 and restored.funds == 480)
+    var restored_tutorial := save.from_json(save.to_json({"tutorial": tutorial.to_state()}))
+    assert(restored_tutorial.tutorial.tutorial_completed)
     assert(save.from_json("not json").is_empty())
     return 0
 ~~~
@@ -560,9 +571,31 @@ func run_all() -> int:
 
 Run: godot --headless --path inn-management-game --script res://tests/test_runner.gd
 
-Expected: non-zero exit because the services are absent.
+Expected: non-zero exit because the progression, tutorial, and save services are absent.
 
 - [ ] **Step 3: Implement deterministic progression and safe serialization**
+
+Create tutorial_service.gd:
+
+~~~
+class_name TutorialService
+extends RefCounted
+const STEPS := ["view_inn", "buy_facility", "place_facility", "discover_combination", "start_business", "settle_day"]
+var step_index := 0
+var completed := false
+func _init(state: Dictionary = {}) -> void:
+    step_index = int(state.get("tutorial_step", 0))
+    completed = bool(state.get("tutorial_completed", false))
+func current_action() -> String:
+    return "" if completed else STEPS[step_index]
+func complete_action(action: String) -> bool:
+    if completed or action != current_action(): return false
+    step_index += 1
+    if step_index == STEPS.size(): completed = true
+    return true
+func to_state() -> Dictionary:
+    return {"tutorial_step": step_index, "tutorial_completed": completed}
+~~~
 
 Create progression_service.gd:
 
@@ -606,19 +639,19 @@ func from_json(text: String) -> Dictionary:
     return parser.data
 ~~~
 
-Modify GameState: initialize ProgressionService with all configured combination IDs, call record_discoveries after calculating effects, assign merchant_offer = progression.offer(week) after a 7-day rollover, and add cycle_summary() returning week, funds, merchant_offer, and catalog.
+Modify GameState: initialize ProgressionService with all configured combination IDs and TutorialService with the saved tutorial state; call record_discoveries after calculating effects; call tutorial.complete_action("discover_combination") when a new combination appears and tutorial.complete_action("settle_day") after day settlement; assign merchant_offer = progression.offer(week) after a 7-day rollover; add cycle_summary() returning week, funds, merchant_offer, catalog, and tutorial.to_state().
 
 - [ ] **Step 4: Verify success**
 
 Run: godot --headless --path inn-management-game --script res://tests/test_runner.gd
 
-Expected: exit code 0; identical seeds repeat merchant offers, invalid saves return an empty dictionary, and catalog ignores unconfigured IDs.
+Expected: exit code 0; tutorial actions must complete in order and persist their completion state, identical seeds repeat merchant offers, invalid saves return an empty dictionary, and catalog ignores unconfigured IDs.
 
 - [ ] **Step 5: Commit**
 
 ~~~
-git add inn-management-game/scripts/services/progression_service.gd inn-management-game/scripts/services/save_service.gd inn-management-game/scripts/game_state.gd inn-management-game/tests/test_progression_service.gd
-git commit -m "feat: add catalog merchant and saves"
+git add inn-management-game/scripts/services/progression_service.gd inn-management-game/scripts/services/tutorial_service.gd inn-management-game/scripts/services/save_service.gd inn-management-game/scripts/game_state.gd inn-management-game/tests/test_progression_service.gd
+git commit -m "feat: add catalog merchant tutorial and saves"
 ~~~
 
 ## Task 6: Build the focused portrait UI and verify the complete loop
@@ -634,7 +667,7 @@ git commit -m "feat: add catalog merchant and saves"
 
 **Interfaces:**
 
-- Produces: usable vertical UI with 布局、营业、图册、商人、结算 actions and reproducible verification.
+- Produces: usable vertical UI with 查看洋房、布局、营业、图册、商人、结算 actions, a tutorial-butler prompt that highlights the required first action, and reproducible verification.
 
 - [ ] **Step 1: Add regression assertions**
 
@@ -667,6 +700,7 @@ extends Control
 var state := GameState.new(1)
 var header := Label.new()
 var body := Label.new()
+var butler := Label.new()
 
 func _ready() -> void:
     var column := VBoxContainer.new()
@@ -674,7 +708,8 @@ func _ready() -> void:
     column.add_theme_constant_override("separation", 18)
     add_child(column)
     column.add_child(header)
-    for title in ["布局", "营业", "图册", "商人", "结算"]:
+    column.add_child(butler)
+    for title in ["查看洋房", "布局", "营业", "图册", "商人", "结算"]:
         var button := Button.new()
         button.text = title
         button.pressed.connect(_on_action.bind(title))
@@ -683,12 +718,17 @@ func _ready() -> void:
     _refresh()
 
 func _on_action(title: String) -> void:
+    var tutorial_action := {"查看洋房": "view_inn", "布局": "place_facility", "营业": "start_business", "图册": "discover_combination", "商人": "buy_facility", "结算": "settle_day"}.get(title, "")
+    if not state.tutorial.completed and not state.tutorial.complete_action(tutorial_action):
+        body.text = "管家：请先完成「%s」" % state.tutorial.current_action()
+        return
     if title == "结算": state.end_day([], {})
     body.text = title + "：首版入口已就绪"
     _refresh()
 
 func _refresh() -> void:
     header.text = "第 %d 日｜资金 %d｜邻里安静度 %d" % [state.day, state.funds, state.neighborhood_quiet]
+    butler.text = "管家：" + ("随时可以查看帮助" if state.tutorial.completed else "请先完成「%s」" % state.tutorial.current_action())
 ~~~
 
 Create README.md:
@@ -704,10 +744,12 @@ godot --headless --path . --script res://tests/test_runner.gd
 
 1. Open scenes/Main.tscn and run it in portrait mode.
 2. Confirm the header displays day, funds, and neighborhood quiet.
-3. Press all five navigation buttons; each changes the body without an error.
-4. Press 结算 seven times; day resets to 1 and week increments.
-5. Place the three reading-corner facilities adjacent; window_reading appears in catalog and boosts quiet/ambience.
-6. Buy a 600-fund hammer; the chosen locked expansion becomes placeable. A 599-fund purchase reports 资金不足.
+3. Confirm the butler displays the required first-time action and rejects out-of-order tutorial actions.
+4. Complete the six actions in order: view_inn, buy_facility, place_facility, discover_combination, start_business, settle_day; confirm the butler switches to help mode and this state survives a save/restore.
+5. Press 结算 seven times; day resets to 1 and week increments.
+6. Place the three reading-corner facilities adjacent; window_reading appears in catalog and boosts quiet/ambience.
+7. Assign either of the two employees to a working role; confirm service rises and fatigue rises after settlement.
+8. Buy a 600-fund hammer; the chosen locked expansion becomes placeable. A 599-fund purchase reports 资金不足.
 ~~~
 
 - [ ] **Step 4: Run automated and manual verification**
@@ -729,6 +771,6 @@ git commit -m "feat: deliver inn management game first loop"
 
 ## Plan self-review
 
-- **Spec coverage:** Task 2 supplies four guests, six standard stats, the required content counts, and the four expansion areas. Task 3 implements layout and combination bonuses. Task 4 implements three named employees, role-based service bonuses, fatigue, guest scoring, event penalty, income and the 7-day loop. Task 5 implements catalog discovery, deterministic merchant offers, in-game hammers and save handling. Task 6 provides a portrait UI plus automated and manual acceptance. Multiple regions remain a Region configuration boundary, as scoped.
+- **Spec coverage:** Task 2 supplies four guests, six standard stats, the required content counts, and the four expansion areas. Task 3 implements layout and combination bonuses. Task 4 implements two named employees, role-based service bonuses, fatigue, guest scoring, event penalty, income and the 7-day loop. Task 5 implements catalog discovery, deterministic merchant offers, in-game hammers, the ordered tutorial-butler state, and save handling. Task 6 provides a portrait UI that blocks out-of-order first-time actions plus automated and manual acceptance. Multiple regions remain a Region configuration boundary, as scoped.
 - **Placeholder scan:** Each task includes paths, interfaces, test code, commands, expected outputs, concrete implementation, and a commit command. No deferred tasks or unresolved requirements are present.
 - **Type consistency:** Facility, Combination, GuestProfile, Region, LayoutService, EffectService, GuestService, ProgressionService, and GameState use consistent names and signatures across all tasks.
