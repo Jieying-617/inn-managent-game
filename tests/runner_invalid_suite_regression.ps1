@@ -14,6 +14,23 @@ func run_all() -> int:
 '@ | Set-Content -LiteralPath $fixturePath -NoNewline
 
 try {
+    $defaultProcess = Start-Process -FilePath $GodotExe -ArgumentList @(
+        "--headless",
+        "--path", $projectPath,
+        "--script", "res://tests/test_runner.gd"
+    ) -PassThru -NoNewWindow
+
+    if (-not $defaultProcess.WaitForExit(10000)) {
+        $defaultProcess.Kill()
+        throw "Godot's default test runner did not exit within 10 seconds."
+    }
+
+    if ($defaultProcess.ExitCode -ne 0) {
+        throw "Godot's default test runner unexpectedly exited $($defaultProcess.ExitCode)."
+    }
+
+    Write-Output "Default-suite regression passed: Godot exited $($defaultProcess.ExitCode)."
+
     $invalidSuites = @(
         "res://tests/_runner_invalid_suite_fixture.gd",
         "res://tests/_runner_missing_suite.gd"

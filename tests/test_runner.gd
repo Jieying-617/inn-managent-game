@@ -3,10 +3,14 @@ const SUITES := ["res://tests/test_layout_service.gd", "res://tests/test_effect_
 
 func _init() -> void:
     var failures := 0
-    for suite_path in _suite_paths():
+    var requested_suites := _suite_paths()
+    var is_targeted_run := not requested_suites.is_empty()
+    var suite_paths = requested_suites if is_targeted_run else SUITES
+    for suite_path in suite_paths:
         if not ResourceLoader.exists(suite_path):
-            push_error("Test suite is missing: %s" % suite_path)
-            failures += 1
+            if is_targeted_run:
+                push_error("Test suite is missing: %s" % suite_path)
+                failures += 1
             continue
 
         var suite_script = load(suite_path)
@@ -29,4 +33,4 @@ func _suite_paths() -> PackedStringArray:
     for argument in OS.get_cmdline_user_args():
         if argument.begins_with("--suite="):
             requested_suites.append(argument.trim_prefix("--suite="))
-    return requested_suites if not requested_suites.is_empty() else SUITES
+    return requested_suites
