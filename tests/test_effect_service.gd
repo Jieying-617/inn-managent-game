@@ -13,4 +13,19 @@ func run_all() -> int:
 	var result := preload("res://scripts/services/effect_service.gd").new().calculate(placements, [combo])
 	assert(result.discovered.has("window_reading"))
 	assert(result.stats.quiet == 3)
+	var duplicate_placements := {
+		Vector2i(10, 0): "bookshelf",
+		Vector2i(0, 0): "bookshelf",
+		Vector2i(1, 0): "armchair",
+		Vector2i(0, 1): "floor_lamp"
+	}
+	var duplicate_result := preload("res://scripts/services/effect_service.gd").new().calculate(duplicate_placements, [combo])
+	assert(duplicate_result.discovered.has("window_reading"))
+	var distant_placements := {
+		Vector2i(0, 0): "bookshelf",
+		Vector2i(3, 0): "armchair",
+		Vector2i(0, 1): "floor_lamp"
+	}
+	var distant_result := preload("res://scripts/services/effect_service.gd").new().calculate(distant_placements, [combo])
+	assert(not distant_result.discovered.has("window_reading"))
 	return 0
